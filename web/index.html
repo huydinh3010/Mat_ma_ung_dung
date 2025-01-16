@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZK Authentication</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <h2 id="loginHeader">Login</h2>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="loginUsername">Username</label>
+                <input type="text" id="loginUsername" required />
+                <div class="error" id="loginUsernameError"></div>
+            </div>
+            <div class="form-group">
+                <label for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" required />
+                <div class="error" id="loginPasswordError"></div>
+            </div>
+            <div class="form-group">
+                <button type="submit">Login</button>
+            </div>
+            <div class="form-group link">
+                <a href="#" onclick="showRegister()">Don't have an account? Register</a>
+            </div>
+        </form>
+
+        <h2 id="twoFactorAuthHeader" style="display:none;">2FA - Google Authenticator</h2>
+        <form id="twoFactorAuthForm" style="display:none;">
+            <div class="form-group">
+                <label for="pin">PIN</label>
+                <input type="text" id="pin" required />
+                <div class="error" id="pinError"></div>
+            </div>
+            <div class="form-group">
+                <button type="submit">Submit</button>
+            </div>
+        </form>
+
+        <h2 style="display:none;" id="registerHeader">Register</h2>
+        <form id="registerForm" style="display:none;">
+            <div class="form-group">
+                <label for="registerUsername">Username</label>
+                <input type="text" id="registerUsername" required />
+                <div class="error" id="registerUsernameError"></div>
+            </div>
+            <div class="form-group">
+                <label for="registerPassword">Password</label>
+                <input type="password" id="registerPassword" required />
+                <div class="error" id="registerPasswordError"></div>
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">Confirm Password</label>
+                <input type="password" id="confirmPassword" required />
+                <div class="error" id="confirmPasswordError"></div>
+            </div>
+            <div class="form-group">
+                <button type="submit">Register</button>
+            </div>
+            <div class="form-group link">
+                <a href="#" onclick="showLogin()">Already have an account? Login</a>
+            </div>
+        </form>
+    </div>
+    <!-- <script type="module" src="./hash_password.js"></script> -->
+    <script src="./snarkjs.min.js"></script>
+    <script>
+        // import CryptoJS from 'crypto-js';
+        // console.log(ZKLib.hashPassword("test"));
+
+        function sha512(str) {
+            return crypto.subtle.digest("SHA-512", new TextEncoder("utf-8").encode(str)).then(buf => {
+                return new Uint8Array(buf);
+            });
+        }
+
+        function convertToBigNumberArray(byteArray) {
+            if (byteArray.length !== 64) {
+                throw new Error("Input byte array must have exactly 64 bytes.");
+            }
+
+            const bigNumberArray = [];
+            const BYTES_PER_NUMBER = 8;
+
+            for (let i = 0; i < byteArray.length; i += BYTES_PER_NUMBER) {
+                // Extract 8 bytes and convert to BigInt
+                const chunk = byteArray.slice(i, i + BYTES_PER_NUMBER);
+                let bigNumber = BigInt(0);
+
+                // Interpret the chunk as a big-endian integer
+                for (let j = 0; j < chunk.length; j++) {
+                    bigNumber = (bigNumber << BigInt(8)) + BigInt(chunk[j]);
+                }
+
+                bigNumberArray.push(bigNumber.toString());
+            }
+
+            return bigNumberArray;
+        }
+
+        function stringToAsciiByteArray(str, length = 128) {
+            const byteArray = [];
+            for (let i = 0; i < str.length; i++) {
+                byteArray.push(str.charCodeAt(i)); 
+            }
+            for (let i = 0; i < length - str.length; i++){
+                byteArray.push(0);
+            }
+            return byteArray;
+        }
+
+        async function calculateProof(hashPassword, nonce) {
+            const { proof, publicSignals } = await snarkjs.groth16.fullProve({ "password": hashPassword, "nonce": nonce }, "./test.wasm", "./test_0001.zkey");
+            return { proof, publicSignals };
+        }
+
+
+
+
+        // calculateProof().then(data => console.log(data));
+
+        // console.log(await sha512("abc"));
+        // sha512("abc").then(data => console.log(data));
+
+        const loginForm = document.getElementById('loginForm');
+        const registerForm = document.getElementById('registerForm');
+        const twoFactorAuthForm = document.getElementById('twoFactorAuthForm');
+        const registerHeader = document.getElementById('registerHeader');
+        const loginHeader = document.getElementById('loginHeader');
+        const twoFactorAuthHeader = document.getElementById('twoFactorAuthHeader');
+
+        // console.log(hashPassword("abc"));
+
+        // Show Register Form
+        function showRegister() {
+            loginForm.style.display = 'none';
+            loginHeader.style.display = 'none';
+            twoFactorAuthHeader.style.display = 'none';
+            twoFactorAuthForm.style.display = 'none';
+            registerForm.style.display = 'block';
+            registerHeader.style.display = 'block';
+        }
+
+        // Show Login Form
+        function showLogin() {
+            loginForm.style.display = 'block';
+            loginHeader.style.display = 'block';
+            registerForm.style.display = 'none';
+            registerHeader.style.display = 'none';
+            twoFactorAuthHeader.style.display = 'none';
+            twoFactorAuthForm.style.display = 'none';
+        }
+
+        // Show 2FA
+        function show2FAForm(){
+            loginForm.style.display = 'none';
+            loginHeader.style.display = 'none';
+            registerForm.style.display = 'none';
+            registerHeader.style.display = 'none';
+            twoFactorAuthHeader.style.display = 'block';
+            twoFactorAuthForm.style.display = 'block';
+        }
+
+        // Validate Form Input
+        function validateInput(field, errorField, minLength = 3) {
+            const value = field.value.trim();
+            if (value.length < minLength) {
+                errorField.textContent = `Must be at least ${minLength} characters.`;
+                return false;
+            } else {
+                errorField.textContent = '';
+                return true;
+            }
+        }
+
+        function validateUsername(field, errorField, minLength = 5, maxLength = 20){
+            const regex = /^[a-zA-Z0-9]+$/;
+            const value = field.value.trim();
+            if (value.length < minLength) {
+                errorField.textContent = `Must be at least ${minLength} characters.`;
+                return false;
+            } else if (value.length > maxLength) {
+                errorField.textContent = `Must be maximum ${maxLength} characters.`;
+                return false;
+            } else if(!regex.test(value)){
+                errorField.textContent = `Cannot contain special characters.`;
+                return false;
+            } else {
+                errorField.textContent = '';
+                return true;
+            }
+        }
+
+        function validatePassword(field, errorField, minLength = 8, maxLength = 128){
+            const regex = /^(?=.*[!@#$%^&*(),.?":{}|<>~`_+=\\/\[\]\-\s])[a-zA-Z0-9!@#$%^&*(),.?":{}|<>~`_+=\\/\[\]\-\s]+$/;
+            const value = field.value;
+            if (value.length < minLength) {
+                errorField.textContent = `Must be at least ${minLength} characters.`;
+                return false;
+            } else if (value.length > maxLength) {
+                errorField.textContent = `Must be maximum ${maxLength} characters.`;
+                return false;
+            } else if(!regex.test(value)){
+                errorField.textContent = `Must contain at least one special character.`;
+                return false;
+            } else {
+                errorField.textContent = '';
+                return true;
+            }
+        }
+
+        // Handle Login Form Submission
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const usernameField = document.getElementById('loginUsername');
+            const passwordField = document.getElementById('loginPassword');
+            const usernameError = document.getElementById('loginUsernameError');
+            const passwordError = document.getElementById('loginPasswordError');
+
+            const validUsername = validateUsername(usernameField, usernameError);
+            const validPassword = validatePassword(passwordField, passwordError);
+
+            if (!validUsername || !validPassword) return;
+
+            const username = usernameField.value.trim();
+            const password = passwordField.value;
+
+            try {
+                var response = await fetch('http://localhost:3000/get-nonce', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+
+                let nonce = undefined;
+
+                if (response.ok) {
+                    const data = await response.json();
+                    nonce = data.nonce;
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error:', response.status, errorData.message || 'Unknown error');
+                    alert('Error:' + errorData.message || 'Get nonce failed.');
+                }
+
+                if(!nonce){
+                    return;
+                }
+
+                // nonce = parseInt(nonce);
+
+                // if(nonce > 1){
+                //     nonce = 1;
+                // }
+
+                let byteArrayPassword = stringToAsciiByteArray(password, 128);
+
+                console.log(byteArrayPassword);
+
+                // let hashedPassword = convertToBigNumberArray(await sha512(password));
+
+                // console.log(hashedPassword);
+
+                const { proof, publicSignals } = await snarkjs.groth16.fullProve({ "password": byteArrayPassword, nonce}, "./login_new.wasm", "./login_new_0001.zkey");
+
+                console.log(proof);
+                console.log(publicSignals);
+
+                response = await fetch('http://localhost:3000/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, proof, "public": publicSignals[1]})
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if(data.token){
+                        if(response.status == 209){
+                            console.log('2FA:', data);
+                            localStorage.setItem('tmpToken', data.token);
+                            localStorage.setItem('username', username);
+                            show2FAForm();
+                        } else {
+                            console.log('Success:', data);
+                            localStorage.setItem('accessToken', data.token);
+                            localStorage.setItem('username', username);
+                            localStorage.setItem('enable2FA', '0');
+                            window.location.href = '/welcome.html';
+                        }
+                    } else {
+                        alert('Error: Empty token!');
+                    }
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error:', response.status, errorData.message || 'Unknown error');
+                    alert('Error:' + errorData.message);
+                }
+            } catch(err){
+                alert('Exception:' + err.message);
+            }            
+        });
+
+        // Handle Register Form Submission
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const usernameField = document.getElementById('registerUsername');
+            const passwordField = document.getElementById('registerPassword');
+            const confirmPasswordField = document.getElementById('confirmPassword');
+            const usernameError = document.getElementById('registerUsernameError');
+            const passwordError = document.getElementById('registerPasswordError');
+            const confirmPasswordError = document.getElementById('confirmPasswordError');
+
+            const validUsername = validateUsername(usernameField, usernameError);
+            const validPassword = validatePassword(passwordField, passwordError);
+
+            if (passwordField.value !== confirmPasswordField.value) {
+                confirmPasswordError.textContent = "Passwords do not match.";
+                return;
+            } else {
+                confirmPasswordError.textContent = '';
+            }
+
+            if (!validUsername || !validPassword) return;
+
+            const username = usernameField.value.trim();
+            const password = passwordField.value;
+
+            let byteArrayPassword = stringToAsciiByteArray(password, 128);
+
+            console.log(byteArrayPassword);
+
+            // let hashedPassword = convertToBigNumberArray(await sha512(password));
+
+            // console.log(hashedPassword);
+
+            try {
+                const { proof, publicSignals } = await snarkjs.groth16.fullProve({ "password": byteArrayPassword}, "./register_new.wasm", "./register_new_0001.zkey");
+
+                console.log(proof);
+                console.log(publicSignals);
+                const response = await fetch('http://localhost:3000/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, "proof": proof, "hashedPassword": publicSignals})
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Success:', data);
+                    alert('Success:' + data.message || 'Registration successful');
+                    showLogin();
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error:', response.status, errorData.message || 'Unknown error');
+                    alert('Error:' + errorData.message || 'Registration failed');
+                }
+            } catch(err){
+                alert('Exception:' + err.message);
+            }
+        });
+
+
+        // Handle 2FA Form Submission
+        twoFactorAuthForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const pin = document.getElementById('pin').value.trim();
+            const tmpToken = localStorage.getItem('tmpToken');
+
+            if (pin.length == 0) return;
+
+            try {
+                response = await fetch('http://localhost:3000/login/verify-2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tmpToken}` },
+                    body: JSON.stringify({ pin })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if(data.token){
+                        console.log('Success:', data);
+                        localStorage.setItem('accessToken', data.token);
+                        localStorage.setItem('enable2FA', '1');
+                        window.location.href = '/welcome.html';
+                    } else {
+                        alert('Error: Empty token!');
+                    }
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error:', response.status, errorData.message || 'Unknown error');
+                    alert('Error:' + errorData.message);
+                    if(response.status === 401 || response.status === 403){
+                        showLogin();
+                    }
+                }
+            } catch(err){
+                alert('Exception:' + err.message);
+            }            
+        });
+    </script>
+</body>
+
+</html>

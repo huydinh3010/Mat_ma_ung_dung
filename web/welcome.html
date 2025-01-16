@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>Welcome</title>
+    
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome!</h1>
+        <p id="message"></p>
+        <p id="enable2FAStatus"></p>
+        <button id="logoutButton">Logout</button>
+        <button id="changePasswordButton">Change Password</button>
+        <button id="enable2FAButton" class="btn">Enable 2FA</button>
+
+        <div id="changePasswordSection" style="display: none; margin-top: 15px;">
+            <h2>Change Password</h2>
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label for="oldPass">Old password</label>
+                    <input type="password" id="oldPass" required />
+                    <div class="error" id="oldPassError"></div>
+                </div>
+                <div class="form-group">
+                    <label for="newPass">New password</label>
+                    <input type="password" id="newPass" required />
+                    <div class="error" id="newPassError"></div>
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">Confirm Password</label>
+                    <input type="password" id="confirmPassword" required />
+                    <div class="error" id="confirmPasswordError"></div>
+                </div>
+                <div class="form-group">
+                    <button type="submit">Submit</button>
+                </div>
+            </form>
+        </div>
+
+        <div id="qrcodeSection" style="display: none; margin-top: 15px;">
+            <h2>Scan this QR code with Google Authenticator</h2>
+            <div id="qrcode" style="align-content: center;">
+
+            </div>
+            <form id="verify-2fa-form" style="display: none; margin-top: 15px;">
+                <div class="form-group">
+                    <label for="pin">Enter PIN from Google Authenticator:</label>
+                    <input type="text" id="pin" name="pin" placeholder="Enter PIN" required>
+                </div>
+                <div class="form-group">
+                    <button type="submit">Verify</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="./snarkjs.min.js"></script>
+    <script>
+
+        function validatePassword(field, errorField, minLength = 8, maxLength = 128){
+            const regex = /^(?=.*[!@#$%^&*(),.?":{}|<>~`_+=\\/\[\]\-\s])[a-zA-Z0-9!@#$%^&*(),.?":{}|<>~`_+=\\/\[\]\-\s]+$/;
+            const value = field.value;
+            if (value.length < minLength) {
+                errorField.textContent = `Must be at least ${minLength} characters.`;
+                return false;
+            } else if (value.length > maxLength) {
+                errorField.textContent = `Must be maximum ${maxLength} characters.`;
+                return false;
+            } else if(!regex.test(value)){
+                errorField.textContent = `Must contain at least one special character.`;
+                return false;
+            } else {
+                errorField.textContent = '';
+                return true;
+            }
+        }
+
+        function stringToAsciiByteArray(str, length = 128) {
+            const byteArray = [];
+            for (let i = 0; i < str.length; i++) {
+                byteArray.push(str.charCodeAt(i)); 
+            }
+            for (let i = 0; i < length - str.length; i++){
+                byteArray.push(0);
+            }
+            return byteArray;
+        }
+
+        const token = localStorage.getItem('accessToken');
+        const username = localStorage.getItem('username');
+        let enable2FA = localStorage.getItem('enable2FA');
+
+        console.log('Token: ' + token);
+        console.log('Username: ' + username);
+
+        if (!token || !username) {
+            window.location.href = '/';
+        } else {
+            document.getElementById('message').textContent = `Hello, ${username}. You are logged in!`;
+        }
+
+        if(enable2FA === '1'){
+            document.getElementById('enable2FAStatus').textContent = `The account has 2-factor authentication enabled`;
+            document.getElementById('enable2FAButton').textContent = 'Disable 2FA';
+        } else {
+            document.getElementById('enable2FAStatus').textContent = ``;
+            document.getElementById('enable2FAButton').textContent = 'Enable 2FA';
+        }
+
+        function clearToken(){
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('username');
+            window.location.href = '/';
+        }
+
+
+        document.getElementById('logoutButton').addEventListener('click', () => {
+            clearToken();
+        });
+
+        document.getElementById('changePasswordButton').addEventListener('click', () => {
+            const qrcodeSection = document.getElementById('qrcodeSection');
+            qrcodeSection.style.display = 'none';
+            const changePasswordSection = document.getElementById('changePasswordSection');
+            changePasswordSection.style.display = changePasswordSection.style.display === 'none' ? 'block' : 'none';
+        });
+
+        document.getElementById('enable2FAButton').addEventListener('click', () => {
+            const changePasswordSection = document.getElementById('changePasswordSection');
+            changePasswordSection.style.display = 'none';
+            if( document.getElementById('enable2FAButton').textContent == 'Enable 2FA'){
+                const qrcodeSection = document.getElementById('qrcodeSection');
+                qrcodeSection.style.display = qrcodeSection.style.display === 'none' ? 'block' : 'none';
+                if(qrcodeSection.style.display === 'none') return;
+                const pinForm = document.getElementById('verify-2fa-form');
+                pinForm.style.display = 'none';
+                document.getElementById('qrcode').innerHTML = '';
+                fetch('http://localhost:3000/enable-2fa', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({}),
+                })
+                .then(response =>{
+                    if(response.status === 210){
+                        localStorage.setItem('enable2FA', '1');
+                        location.reload();
+                    } else if(response.status === 401 || response.status === 403){
+                        clearToken();
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.qrCode) {
+                        console.log(data.qrCode);
+                        const img = document.createElement('img');
+                        img.src = data.qrCode;
+                        document.getElementById('qrcode').appendChild(img);
+                        const pinForm = document.getElementById('verify-2fa-form');
+                        pinForm.style.display = 'block';
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error}`);
+                });
+            } else {
+                console.log("Disable 2FA");
+                fetch('http://localhost:3000/disable-2fa', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({}),
+                })
+                .then(response =>{
+                    if(response.status === 210 || response.status === 200){
+                        localStorage.setItem('enable2FA', '0');
+                        location.reload();
+                    } else if(response.status === 401 || response.status === 403){
+                        clearToken();
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data) {
+                        console.log('Success:', data);
+                        alert('Success: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error}`);
+                });
+            }
+        });
+
+        document.getElementById('verify-2fa-form').addEventListener('submit', async function (event) {
+            event.preventDefault(); 
+            const pin = document.getElementById('pin').value.trim();
+            if(pin.length == 0) return;
+            
+            try {
+                const response = await fetch('http://localhost:3000/verify-2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+                    body: JSON.stringify({"pin": pin})
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Success:', data);
+                    alert('Success:' + data.message);
+                    localStorage.setItem('enable2FA', '1');
+                    location.reload();
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error:', response.status, errorData.message || 'Unknown error');
+                    alert('Error:' + errorData.message);
+                    if(response.status === 401 || response.status === 403){
+                        clearToken();
+                    }
+                }
+            } catch(err){
+                alert('Exception:' + err.message);
+            }
+        });
+
+        document.getElementById('changePasswordForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const oldPassField = document.getElementById('oldPass');
+            const newPassField = document.getElementById('newPass');
+            const confirmPasswordField = document.getElementById('confirmPassword');
+
+            const oldPassError = document.getElementById('oldPassError');
+            const newPassError = document.getElementById('newPassError');
+            const confirmPasswordError = document.getElementById('confirmPasswordError');
+
+            const validOldPass = validatePassword(oldPassField, oldPassError);
+            const validNewPass = validatePassword(newPassField, newPassError);
+
+            if (oldPassField.value == newPassField.value) {
+                newPassError.textContent = "New password must be different from old password.";
+                return;
+            } else {
+                newPassError.textContent = '';
+            }
+
+            if (newPassField.value !== confirmPasswordField.value) {
+                confirmPasswordError.textContent = "New passwords do not match.";
+                return;
+            } else {
+                confirmPasswordError.textContent = '';
+            }
+
+            if(!validOldPass || !validNewPass) return;
+            const oldPass = oldPassField.value;
+            const newPass = newPassField.value;
+
+            let byteArrayOldPassword = stringToAsciiByteArray(oldPass, 128);
+            let byteArrayNewPassword = stringToAsciiByteArray(newPass, 128);
+
+            try {
+                const { proof, publicSignals } = await snarkjs.groth16.fullProve({ "oldPassword": byteArrayOldPassword, "newPassword": byteArrayNewPassword}, "./change_pass.wasm", "./change_pass_0001.zkey");
+                const response = await fetch('http://localhost:3000/change-pass', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+                    body: JSON.stringify({"proof": proof, "hashedPassword": publicSignals[1]})
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Success:', data);
+                    alert('Success:' + data.message);
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error:', response.status, errorData.message || 'Unknown error');
+                    alert('Error:' + errorData.message);
+                    if(response.status === 401 || response.status === 403){
+                        clearToken();
+                    }
+                }
+            } catch(err){
+                alert('Exception:' + err.message);
+            }
+        });
+    </script>
+</body>
+</html>
